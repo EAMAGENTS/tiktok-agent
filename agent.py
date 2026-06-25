@@ -67,31 +67,21 @@ Réponds UNIQUEMENT en JSON valide sans markdown :
     return json.loads(text)
 
 # ─── ÉTAPE 3 : VOIX OFF ───────────────────────────────────────────────────────
-def generate_voiceover(script_text, output_path):
-    print("🎙️ Génération voix off...")
-    url = "https://api.openai.com/v1/audio/speech"
-    headers = {
-        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "tts-1",
-        "input": script_text,
-        "voice": "nova",
-        "speed": 1.0
-    }
-    r = requests.post(url, headers=headers, json=data)
-    if r.status_code == 200:
-        with open(output_path, "wb") as f:
-            f.write(r.content)
-        print(f"✅ Audio généré")
+ddef generate_voiceover(script_text, output_path):
+    print("🎙️ Génération voix off (gTTS)...")
+    from gtts import gTTS
+    try:
+        # Nettoyer le script (enlever les indications scéniques)
+        clean_text = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
+        clean_text = re.sub(r'(ACCROCHE|PROBLÈME|SOLUTION|DÉMONSTRATION|CTA)\s*[:.-]?\s*', '', clean_text)
+        clean_text = clean_text.replace('"', '').replace("'", "'").strip()
+        
+        tts = gTTS(text=clean_text, lang='fr', slow=False)
+        tts.save(output_path)
+        print(f"✅ Audio généré ({len(clean_text)} caractères)")
         return True
-    else:
-        print(f"⚠️ OpenAI TTS indisponible (429), création audio muet...")
-        subprocess.run([
-            "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-            "-t", "35", "-q:a", "9", "-acodec", "libmp3lame", "-y", output_path
-        ], capture_output=True)
+    except Exception as e:
+        print(f"❌ gTTS échoué : {e}")
         return False
 
 # ─── ÉTAPE 4 : IMAGE PRODUIT ──────────────────────────────────────────────────
