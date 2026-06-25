@@ -3,17 +3,13 @@ import unicodedata
 from dotenv import load_dotenv
 import anthropic
 from gtts import gTTS
+from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 PEXELS_KEY = os.getenv("PEXELS_API_KEY")
-
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-
-
-def strip_accents(text):
-    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
 
 
 def get_trending_products():
@@ -32,18 +28,14 @@ def select_product_and_write_script(products):
     prompt = f"""Tu es expert TikTok viral. Produits :
 {json.dumps(products, ensure_ascii=False)}
 
-Choisis le meilleur produit. Écris un script TikTok de 20 secondes en français, ULTRA viral.
-RÈGLES :
-- HOOK choc dès le 1er mot
-- 50 à 60 mots maximum
-- Phrases courtes
-- Pas d'indications scéniques, juste le texte à lire
+Choisis le meilleur et écris un script TikTok de 20 secondes en français, ULTRA viral.
+RÈGLES : HOOK choc, 50-60 mots maximum, phrases courtes, juste le texte à lire.
 
-Réponds en JSON valide :
+JSON valide :
 {{
   "product": {{"name": "...", "price": "...", "url": "...", "search": "..."}},
   "hook": "phrase choc 3-5 mots",
-  "script": "texte pur, 50-60 mots",
+  "script": "texte pur 50-60 mots",
   "tagline": "CTA final 4-6 mots",
   "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }}"""
@@ -58,8 +50,7 @@ Réponds en JSON valide :
 
 def generate_voiceover(script_text, output_path):
     print("🎙️ Voix off...")
-    clean = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
-    clean = clean.replace('"', '').strip()
+    clean = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text).replace('"', '').strip()
     tts = gTTS(text=clean, lang='fr', slow=False)
     tts.save(output_path)
     return os.path.getsize(output_path) > 1000
@@ -84,8 +75,7 @@ def download_pexels_videos(search_term, count, output_dir):
         r = requests.get(
             "https://api.pexels.com/videos/search",
             params={"query": search_term, "per_page": 15, "orientation": "portrait"},
-            headers={"Authorization": PEXELS_KEY},
-            timeout=15
+            headers={"Authorization": PEXELS_KEY}, timeout=15
         )
         videos = r.json().get("videos", [])
         if not videos:
@@ -108,36 +98,82 @@ def download_pexels_videos(search_term, count, output_dir):
         print(f"⚠️ Pexels : {e}")
         return []
 
+
+def find_font():
+    """Trouve une police TTF disponible sur le système"""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def create_text_overlay(text, font_size, color, width, output_path, bg_alpha=180):
+    """Crée une image PNG transparente avec du texte centré, fond noir semi-transparent"""
+    font_path = find_font()
+    if not font_path:
+        print("❌ Pas de font trouvée")
+        return False
+    
+    # Image transparente largeur fixe
+    img = Image.new("RGBA", (width, font_size * 3), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(font_path, font_size)
+    
+    # Mesure du texte
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    
+    # Padding
+    pad_x, pad_y = 40, 25
+    box_w = text_w + pad_x * 2
+    box_h = text_h + pad_y * 2
+    
+    # Recrée avec bonne taille
+    img = Image.new("RGBA", (width, box_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    
+    # Fond noir semi-transparent centré
+    box_x = (width - box_w) // 2
+    draw.rectangle([box_x, 0, box_x + box_w, box_h], fill=(0, 0, 0, bg_alpha))
+    
+    # Texte centré
+    text_x = (width - text_w) // 2 - bbox[0]
+    text_y = pad_y - bbox[1]
+    draw.text((text_x, text_y), text, font=font, fill=color)
+    
+    img.save(output_path, "PNG")
+    return True
+
+
 def create_video(clips, audio_path, hook, product_name, product_price, tagline, output_path):
     print("🎬 Montage vidéo...")
     duration = get_audio_duration(audio_path)
     print(f"   Durée : {duration:.1f}s")
-
     if not clips:
         return False
 
-    # Nettoyage ULTRA agressif pour FFmpeg drawtext
-    def clean_for_ffmpeg(text):
-        text = strip_accents(text)
-        # Remplacer toutes les apostrophes Unicode et caractères spéciaux
-        text = re.sub(r"[\u2018\u2019\u201A\u201B\u2032\u2035'`]", "", text)
-        text = re.sub(r"[\u201C\u201D\u201E\u201F\u2033\u2036\"]", "", text)
-        text = text.replace("€", "EUR").replace("£", "GBP").replace("$", "USD")
-        text = re.sub(r"[:,!?.;@#%&*()\[\]{}<>|\\/=+]", "", text)
-        text = re.sub(r"[^\x00-\x7F]+", "", text)  # Supprime tout caractère non-ASCII restant
-        return text.strip()
-
-    safe_hook = clean_for_ffmpeg(hook)[:30]
-    safe_name = clean_for_ffmpeg(product_name)[:28]
-    safe_tagline = clean_for_ffmpeg(tagline)[:35]
-    safe_price = clean_for_ffmpeg(product_price)
-    
-    print(f"   Hook nettoyé : '{safe_hook}'")
-    print(f"   Nom nettoyé : '{safe_name}'")
-
-    # Préparer chaque clip à la bonne durée
-    clip_duration = duration / len(clips)
     tmpdir = os.path.dirname(clips[0])
+    
+    # 1. Prépare les overlays texte avec PIL
+    hook_png = f"{tmpdir}/hook.png"
+    name_png = f"{tmpdir}/name.png"
+    tagline_png = f"{tmpdir}/tagline.png"
+    price_png = f"{tmpdir}/price.png"
+    
+    create_text_overlay(hook, 90, (255, 235, 59, 255), 1080, hook_png)
+    create_text_overlay(product_name, 60, (255, 255, 255, 255), 1080, name_png)
+    create_text_overlay(tagline, 55, (255, 235, 59, 255), 1080, tagline_png)
+    create_text_overlay(product_price, 130, (255, 51, 102, 255), 1080, price_png)
+    print("   ✅ Overlays texte créés")
+
+    # 2. Prépare les clips vidéo (1080x1920, 30fps)
+    clip_duration = duration / len(clips)
     prepared = []
     for i, clip in enumerate(clips):
         out = f"{tmpdir}/prep_{i}.mp4"
@@ -146,8 +182,7 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
             "-t", str(clip_duration),
             "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30",
             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            "-an", "-r", "30",
-            out
+            "-an", "-r", "30", out
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000:
@@ -157,63 +192,59 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if not prepared:
         return False
 
-    # Concat avec loop si pas assez long
+    # 3. Concat
     concat_file = f"{tmpdir}/concat.txt"
     with open(concat_file, "w") as f:
-        # Boucle les clips pour couvrir toute la durée audio
-        loops_needed = max(1, int(duration / (clip_duration * len(prepared))) + 1)
-        for _ in range(loops_needed):
+        loops = max(1, int(duration / (clip_duration * len(prepared))) + 2)
+        for _ in range(loops):
             for p in prepared:
                 f.write(f"file '{p}'\n")
 
     concat_out = f"{tmpdir}/concat.mp4"
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
-        "-t", str(duration + 1),
-        "-c", "copy", concat_out
+        "-t", str(duration + 1), "-c", "copy", concat_out
     ], capture_output=True)
-
-    if not os.path.exists(concat_out) or os.path.getsize(concat_out) < 1000:
+    
+    if not os.path.exists(concat_out):
         return False
     print("   ✅ Concat OK")
 
-    # Overlays + audio
-    vf = (
-        f"drawbox=enable='between(t,0,3)':x=0:y=600:w=1080:h=400:color=black@0.75:t=fill,"
-        f"drawtext=enable='between(t,0,3)':text='{safe_hook}':fontsize=90:fontcolor=yellow:x=(w-text_w)/2:y=720,"
-        f"drawbox=enable='gte(t,3)':x=0:y=150:w=1080:h=180:color=black@0.7:t=fill,"
-        f"drawtext=enable='gte(t,3)':text='{safe_name}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=210,"
-        f"drawbox=enable='gte(t,{duration*0.6:.1f})':x=0:y=1450:w=1080:h=350:color=black@0.8:t=fill,"
-        f"drawtext=enable='gte(t,{duration*0.6:.1f})':text='{safe_tagline}':fontsize=55:fontcolor=yellow:x=(w-text_w)/2:y=1500,"
-        f"drawtext=enable='gte(t,{duration*0.6:.1f})':text='{safe_price}':fontsize=130:fontcolor=#FF3366:x=(w-text_w)/2:y=1600"
-    )
-
+    # 4. Overlay PNG + audio
+    middle_time = duration * 0.6
     cmd = [
         "ffmpeg", "-y",
         "-i", concat_out,
+        "-i", hook_png,
+        "-i", name_png,
+        "-i", tagline_png,
+        "-i", price_png,
         "-i", audio_path,
-        "-vf", vf,
+        "-filter_complex",
+        f"[0:v][1:v]overlay=0:700:enable='between(t,0,3)'[v1];"
+        f"[v1][2:v]overlay=0:180:enable='gte(t,3)'[v2];"
+        f"[v2][3:v]overlay=0:1450:enable='gte(t,{middle_time:.1f})'[v3];"
+        f"[v3][4:v]overlay=0:1600:enable='gte(t,{middle_time:.1f})'[vout]",
+        "-map", "[vout]", "-map", "5:a",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
-        "-map", "0:v", "-map", "1:a",
-        "-t", str(duration),
-        "-movflags", "+faststart",
+        "-t", str(duration), "-movflags", "+faststart",
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+    
     if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
         print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
         return True
-    print("❌ FFmpeg erreur (dernières lignes) :")
-    print(result.stderr[-1500:])
+    print("❌ FFmpeg erreur :")
+    print(result.stderr[-2000:])
     return False
 
 
 def upload_to_cloudinary(video_path):
     print("☁️ Upload Cloudinary...")
     try:
-        import cloudinary
-        import cloudinary.uploader
+        import cloudinary, cloudinary.uploader
         cloudinary.config(url=os.getenv("CLOUDINARY_URL"))
         upload = cloudinary.uploader.upload_large(
             video_path, resource_type="video",
@@ -236,17 +267,14 @@ def run_agent():
 
         audio_path = f"{tmpdir}/voix.mp3"
         if not generate_voiceover(data["script"], audio_path):
-            print("⛔ Audio échec")
             return
 
         clips = download_pexels_videos(product["search"], 4, tmpdir)
         if not clips:
-            print("⛔ Pas de B-rolls")
             return
 
         video_path = f"{tmpdir}/video.mp4"
         if not create_video(clips, audio_path, data["hook"], product["name"], product["price"], data["tagline"], video_path):
-            print("⛔ Montage échec")
             return
 
         url = upload_to_cloudinary(video_path)
