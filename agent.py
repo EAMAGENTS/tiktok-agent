@@ -44,7 +44,11 @@ JSON valide :
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}]
     )
-    text = re.sub(r'```json|```', '', response.content[0].text).strip()
+  text = response.content[0].text
+    # Extrait uniquement le bloc JSON entre { et le dernier }
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        text = match.group(0)
     return json.loads(text)
 
 
