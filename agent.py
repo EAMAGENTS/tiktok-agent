@@ -1,11 +1,9 @@
 import os, json, requests, subprocess, tempfile, re, random
+import unicodedata
 from dotenv import load_dotenv
 import anthropic
 from gtts import gTTS
-import unicodedata
 
-def strip_accents(text):
-    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
 load_dotenv()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -13,7 +11,11 @@ PEXELS_KEY = os.getenv("PEXELS_API_KEY")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-# ─── 1. PRODUITS ──────────────────────────────────────────────────────────────
+
+def strip_accents(text):
+    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
+
+
 def get_trending_products():
     print("🔍 Produits trending...")
     return [
@@ -24,7 +26,7 @@ def get_trending_products():
         {"name": "Support téléphone voiture", "price": "4.99€", "url": "https://fr.aliexpress.com/w/wholesale-phone-holder.html", "search": "phone car holder"},
     ]
 
-# ─── 2. SCRIPT IA ─────────────────────────────────────────────────────────────
+
 def select_product_and_write_script(products):
     print("🧠 Claude génère script...")
     prompt = f"""Tu es expert TikTok viral. Produits :
@@ -32,17 +34,17 @@ def select_product_and_write_script(products):
 
 Choisis le meilleur produit. Écris un script TikTok de 20 secondes en français, ULTRA viral.
 RÈGLES :
-- HOOK choc dès le 1er mot (question, statistique, problème)
+- HOOK choc dès le 1er mot
 - 50 à 60 mots maximum
-- Phrases courtes (max 8 mots)
-- Pas d'indications scéniques, pas de parenthèses, JUSTE le texte à lire
+- Phrases courtes
+- Pas d'indications scéniques, juste le texte à lire
 
 Réponds en JSON valide :
 {{
   "product": {{"name": "...", "price": "...", "url": "...", "search": "..."}},
-  "hook": "phrase choc 3-5 mots pour overlay 1ère seconde",
-  "script": "texte pur à lire, 50-60 mots",
-  "tagline": "phrase finale CTA 4-6 mots",
+  "hook": "phrase choc 3-5 mots",
+  "script": "texte pur, 50-60 mots",
+  "tagline": "CTA final 4-6 mots",
   "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }}"""
     response = client.messages.create(
@@ -53,7 +55,7 @@ Réponds en JSON valide :
     text = re.sub(r'```json|```', '', response.content[0].text).strip()
     return json.loads(text)
 
-# ─── 3. VOIX OFF ──────────────────────────────────────────────────────────────
+
 def generate_voiceover(script_text, output_path):
     print("🎙️ Voix off...")
     clean = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
@@ -61,6 +63,7 @@ def generate_voiceover(script_text, output_path):
     tts = gTTS(text=clean, lang='fr', slow=False)
     tts.save(output_path)
     return os.path.getsize(output_path) > 1000
+
 
 def get_audio_duration(audio_path):
     result = subprocess.run([
@@ -72,11 +75,10 @@ def get_audio_duration(audio_path):
     except:
         return 20.0
 
-# ─── 4. B-ROLLS PEXELS ────────────────────────────────────────────────────────
+
 def download_pexels_videos(search_term, count, output_dir):
     print(f"📹 B-rolls Pexels : {search_term} (×{count})")
     if not PEXELS_KEY:
-        print("⚠️ Pas de clé Pexels")
         return []
     try:
         r = requests.get(
@@ -91,7 +93,6 @@ def download_pexels_videos(search_term, count, output_dir):
         random.shuffle(videos)
         paths = []
         for i, video in enumerate(videos[:count]):
-            # Choisir le fichier HD ou SD le plus adapté
             files = sorted(video["video_files"], key=lambda f: f.get("width", 0))
             best = next((f for f in files if f.get("width", 0) >= 720), files[-1] if files else None)
             if not best:
@@ -107,24 +108,21 @@ def download_pexels_videos(search_term, count, output_dir):
         print(f"⚠️ Pexels : {e}")
         return []
 
-# ─── 5. MONTAGE VIDÉO COMPLET ─────────────────────────────────────────────────
+
 def create_video(clips, audio_path, hook, product_name, product_price, tagline, output_path):
-    print("🎬 Montage vidéo dynamique...")
+    print("🎬 Montage vidéo...")
     duration = get_audio_duration(audio_path)
-    print(f"   Durée audio : {duration:.1f}s")
+    print(f"   Durée : {duration:.1f}s")
 
     if not clips:
-        print("❌ Pas de clips")
         return False
 
     clip_duration = duration / len(clips)
-    
-   safe_hook = strip_accents(re.sub(r"[':,!?.]", "", hook))[:30]
+    safe_hook = strip_accents(re.sub(r"[':,!?.]", "", hook))[:30]
     safe_name = strip_accents(re.sub(r"[':,!?.]", "", product_name))[:28]
     safe_tagline = strip_accents(re.sub(r"[':,!?.]", "", tagline))[:35]
     safe_price = strip_accents(product_price.replace("'", ""))
 
-    # Étape 1 : préparer chaque clip (re-encode propre)
     tmpdir = os.path.dirname(clips[0])
     prepared = []
     for i, clip in enumerate(clips):
@@ -140,32 +138,26 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000:
             prepared.append(out)
-            print(f"   ✅ Clip {i+1} préparé")
-        else:
-            print(f"   ⚠️ Clip {i+1} : {result.stderr[-200:]}")
+            print(f"   ✅ Clip {i+1} prep")
 
     if not prepared:
-        print("❌ Aucun clip préparé")
         return False
 
-    # Étape 2 : concat
     concat_file = f"{tmpdir}/concat.txt"
     with open(concat_file, "w") as f:
         for p in prepared:
             f.write(f"file '{p}'\n")
 
     concat_out = f"{tmpdir}/concat.mp4"
-    result = subprocess.run([
+    subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
         "-c", "copy", concat_out
-    ], capture_output=True, text=True)
-    
-    if not os.path.exists(concat_out) or os.path.getsize(concat_out) < 1000:
-        print(f"❌ Concat : {result.stderr[-300:]}")
-        return False
-    print(f"   ✅ Concat OK")
+    ], capture_output=True)
 
-    # Étape 3 : overlays + audio en une passe
+    if not os.path.exists(concat_out) or os.path.getsize(concat_out) < 1000:
+        return False
+    print("   ✅ Concat OK")
+
     vf = (
         f"drawbox=enable='between(t,0,3)':x=0:y=600:w=1080:h=400:color=black@0.75:t=fill,"
         f"drawtext=enable='between(t,0,3)':text='{safe_hook}':fontsize=90:fontcolor=yellow:x=(w-text_w)/2:y=720,"
@@ -189,14 +181,14 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    
     if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
         print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
         return True
-  print("❌ FFmpeg overlay erreur complète :")
+    print("❌ FFmpeg erreur complète :")
     print(result.stderr)
+    return False
 
-# ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
+
 def upload_to_cloudinary(video_path):
     print("☁️ Upload Cloudinary...")
     try:
@@ -212,7 +204,7 @@ def upload_to_cloudinary(video_path):
         print(f"❌ Cloudinary : {e}")
         return None
 
-# ─── PIPELINE ─────────────────────────────────────────────────────────────────
+
 def run_agent():
     print("\n🚀 AGENT TIKTOK PROMO\n" + "="*40)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -221,7 +213,6 @@ def run_agent():
         product = data["product"]
         print(f"✅ Produit : {product['name']}")
         print(f"✅ Hook : {data['hook']}")
-        print(f"✅ Tagline : {data['tagline']}")
 
         audio_path = f"{tmpdir}/voix.mp3"
         if not generate_voiceover(data["script"], audio_path):
@@ -248,6 +239,7 @@ def run_agent():
         print(f"🌐 {url}")
         print(f"📱 {description}")
         print("="*40)
+
 
 if __name__ == "__main__":
     run_agent()
