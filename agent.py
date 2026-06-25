@@ -179,6 +179,16 @@ def run_agent():
         print(f"\n✅ CYCLE TERMINÉ")
         print(f"   Produit : {product['name']}")
         print(f"   Description : {description}")
+# Upload vidéo sur Cloudinary
+        try:
+            import cloudinary
+            import cloudinary.uploader
+            cloudinary.config(url=os.getenv("CLOUDINARY_URL"))
+            upload = cloudinary.uploader.upload(video_path, resource_type="video", folder="tiktok-agent")
+            video_url = upload["secure_url"]
+            print(f"\n🌐 Vidéo en ligne : {video_url}")
+        except Exception as e:
+            print(f"⚠️ Upload Cloudinary échoué : {e}")
 
 if __name__ == "__main__":
     run_agent()
