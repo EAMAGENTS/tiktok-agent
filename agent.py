@@ -2,6 +2,7 @@ import os, json, requests, subprocess, tempfile, re
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import anthropic
+from gtts import gTTS
 
 load_dotenv()
 
@@ -11,51 +12,31 @@ TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-# ─── ÉTAPE 1 : PRODUITS TRENDING ─────────────────────────────────────────────
+# ─── 1. PRODUITS TRENDING ─────────────────────────────────────────────────────
 def get_trending_products():
     print("🔍 Recherche produits trending...")
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-    try:
-        r = requests.get("https://www.aliexpress.com/bestselling/", headers=headers, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-        products = []
-        for item in soup.select("a[href*='/item/']")[:15]:
-            name = item.get_text(strip=True)[:80]
-            if len(name) > 10:
-                url = "https:" + item["href"] if item["href"].startswith("//") else item["href"]
-                products.append({"name": name, "price": "Prix AliExpress", "image_url": "", "url": url})
-        if products:
-            return products[:10]
-    except Exception as e:
-        print(f"⚠️ Scraping échoué : {e}")
-
-    # Fallback fiable — produits trending connus
-    print("⚠️ Utilisation liste fallback trending")
     return [
-        {"name": "Lampe LED USB rechargeable portable", "price": "8.99€", "image_url": "", "url": "https://fr.aliexpress.com/w/wholesale-led-usb-lamp.html"},
-        {"name": "Montre connectée sport waterproof", "price": "15.99€", "image_url": "", "url": "https://fr.aliexpress.com/w/wholesale-smart-watch.html"},
-        {"name": "Écouteurs sans fil Bluetooth 5.0", "price": "12.99€", "image_url": "", "url": "https://fr.aliexpress.com/w/wholesale-bluetooth-earphones.html"},
-        {"name": "Mini aspirateur de bureau USB", "price": "6.99€", "image_url": "", "url": "https://fr.aliexpress.com/w/wholesale-mini-vacuum.html"},
-        {"name": "Support téléphone voiture magnétique", "price": "4.99€", "image_url": "", "url": "https://fr.aliexpress.com/w/wholesale-car-phone-holder.html"},
+        {"name": "Lampe LED USB rechargeable portable", "price": "8.99€", "url": "https://fr.aliexpress.com/w/wholesale-led-usb-lamp.html"},
+        {"name": "Montre connectée sport waterproof", "price": "15.99€", "url": "https://fr.aliexpress.com/w/wholesale-smart-watch.html"},
+        {"name": "Écouteurs sans fil Bluetooth 5.0", "price": "12.99€", "url": "https://fr.aliexpress.com/w/wholesale-bluetooth-earphones.html"},
+        {"name": "Mini aspirateur de bureau USB", "price": "6.99€", "url": "https://fr.aliexpress.com/w/wholesale-mini-vacuum.html"},
+        {"name": "Support téléphone voiture magnétique", "price": "4.99€", "url": "https://fr.aliexpress.com/w/wholesale-car-phone-holder.html"},
     ]
 
-# ─── ÉTAPE 2 : SÉLECTION & SCRIPT IA ─────────────────────────────────────────
+# ─── 2. SCRIPT IA ─────────────────────────────────────────────────────────────
 def select_product_and_write_script(products):
-    print("🧠 Claude sélectionne le produit et écrit le script...")
-    prompt = f"""Tu es un expert en marketing TikTok viral.
-Voici une liste de produits AliExpress :
-{json.dumps(products, ensure_ascii=False, indent=2)}
+    print("🧠 Claude génère le script...")
+    prompt = f"""Tu es expert TikTok viral. Voici des produits :
+{json.dumps(products, ensure_ascii=False)}
 
-1. Choisis le produit avec le meilleur potentiel viral TikTok.
-2. Écris un script vidéo de 30 secondes en français, ultra-accrocheur.
-Format : accroche choc (3s) | problème/solution (15s) | démonstration (8s) | CTA urgent (4s).
-3. Génère 5 hashtags viraux français.
+Choisis le meilleur produit et écris un script vidéo TikTok de 30 secondes en français.
+IMPORTANT : Le script doit être du TEXTE PUR à lire à voix haute, SANS aucune indication scénique, SANS parenthèses, SANS marqueurs de temps.
 
-Réponds UNIQUEMENT en JSON valide sans markdown :
+Réponds UNIQUEMENT en JSON :
 {{
-  "product": {{"name": "...", "price": "...", "url": "...", "image_url": ""}},
-  "script": "texte complet du script",
-  "angle": "angle marketing",
+  "product": {{"name": "...", "price": "...", "url": "..."}},
+  "script": "texte pur à lire, sans aucune annotation, 60 à 80 mots",
+  "angle": "angle marketing en une phrase courte",
   "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }}"""
     response = client.messages.create(
@@ -66,125 +47,140 @@ Réponds UNIQUEMENT en JSON valide sans markdown :
     text = re.sub(r'```json|```', '', response.content[0].text).strip()
     return json.loads(text)
 
-# ─── ÉTAPE 3 : VOIX OFF ───────────────────────────────────────────────────────
-ddef generate_voiceover(script_text, output_path):
+# ─── 3. VOIX OFF gTTS ─────────────────────────────────────────────────────────
+def generate_voiceover(script_text, output_path):
     print("🎙️ Génération voix off (gTTS)...")
-    from gtts import gTTS
-    try:
-        # Nettoyer le script (enlever les indications scéniques)
-        clean_text = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
-        clean_text = re.sub(r'(ACCROCHE|PROBLÈME|SOLUTION|DÉMONSTRATION|CTA)\s*[:.-]?\s*', '', clean_text)
-        clean_text = clean_text.replace('"', '').replace("'", "'").strip()
-        
-        tts = gTTS(text=clean_text, lang='fr', slow=False)
-        tts.save(output_path)
-        print(f"✅ Audio généré ({len(clean_text)} caractères)")
-        return True
-    except Exception as e:
-        print(f"❌ gTTS échoué : {e}")
+    clean = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
+    clean = re.sub(r'\d+\s*[-–:]\s*\d+\s*s', '', clean)
+    clean = clean.replace('"', '').strip()
+    if len(clean) < 10:
+        print("❌ Script trop court")
         return False
-
-# ─── ÉTAPE 4 : IMAGE PRODUIT ──────────────────────────────────────────────────
-def download_image(image_url, output_path):
-    print("🖼️ Préparation image...")
-    try:
-        if image_url and image_url.startswith("http"):
-            r = requests.get(image_url, timeout=10)
-            with open(output_path, "wb") as f:
-                f.write(r.content)
-            return True
-    except:
-        pass
-    # Fond dégradé noir si pas d'image
-    subprocess.run([
-        "ffmpeg", "-f", "lavfi", "-i", "color=c=black:size=1080x1920:rate=30",
-        "-t", "35", "-y", output_path
-    ], capture_output=True)
+    tts = gTTS(text=clean, lang='fr', slow=False)
+    tts.save(output_path)
+    # Validation
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+        print(f"✅ Audio OK ({os.path.getsize(output_path)} bytes)")
+        return True
+    print("❌ Audio invalide")
     return False
 
-# ─── ÉTAPE 5 : MONTAGE VIDÉO ─────────────────────────────────────────────────
-def create_video(image_path, audio_path, product_name, product_price, output_path):
-    print("🎬 Montage FFmpeg...")
+# ─── 4. CRÉATION IMAGE FFmpeg ─────────────────────────────────────────────────
+def create_background(product_name, product_price, image_path):
+    print("🖼️ Création image fond...")
+    # Fond noir avec texte produit (couleur via lavfi)
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", f"color=c=0x1a1a2e:s=1080x1920:d=1",
+        "-frames:v", "1",
+        image_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0 and os.path.exists(image_path):
+        print(f"✅ Image OK")
+        return True
+    print(f"❌ Erreur image : {result.stderr[-200:]}")
+    return False
+
+# ─── 5. MONTAGE VIDÉO FFmpeg ──────────────────────────────────────────────────
+def create_video(image_path, audio_path, output_path):
+    print("🎬 Montage vidéo...")
+    # Récupère la durée audio
+    duration_cmd = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", audio_path
+    ]
+    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True)
+    try:
+        duration = float(duration_result.stdout.strip())
+    except:
+        duration = 30.0
+    print(f"   Durée audio : {duration:.1f}s")
+
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", image_path,
         "-i", audio_path,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-shortest",
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+        "-c:v", "libx264", "-tune", "stillimage",
+        "-c:a", "aac", "-b:a", "192k",
+        "-pix_fmt", "yuv420p",
+        "-t", str(duration),
+        "-shortest",
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
-        print("✅ Vidéo créée")
-    else:
-        print(f"❌ FFmpeg erreur : {result.stderr[-300:]}")
+    if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
+        print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
+        return True
+    print(f"❌ FFmpeg erreur : {result.stderr[-300:]}")
+    return False
 
-# ─── ÉTAPE 6 : TIKTOK TOKEN ───────────────────────────────────────────────────
-def get_tiktok_token():
-    r = requests.post("https://open.tiktokapis.com/v2/oauth/token/", data={
-        "client_key": TIKTOK_CLIENT_KEY,
-        "client_secret": TIKTOK_CLIENT_SECRET,
-        "grant_type": "client_credentials"
-    })
-    token = r.json().get("access_token", "")
-    if token:
-        print("✅ Token TikTok obtenu")
-    else:
-        print(f"❌ Token TikTok échoué : {r.text[:200]}")
-    return token
+# ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
+def upload_to_cloudinary(video_path):
+    print("☁️ Upload Cloudinary...")
+    try:
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(url=os.getenv("CLOUDINARY_URL"))
+        upload = cloudinary.uploader.upload_large(
+            video_path,
+            resource_type="video",
+            folder="tiktok-agent",
+            chunk_size=6000000
+        )
+        url = upload["secure_url"]
+        print(f"✅ Vidéo en ligne : {url}")
+        return url
+    except Exception as e:
+        print(f"❌ Cloudinary échoué : {e}")
+        return None
 
-# ─── ÉTAPE 7 : PUBLICATION TIKTOK ────────────────────────────────────────────
-def post_to_tiktok(video_path, description):
-    print("📱 Vidéo prête — copie manuelle sur TikTok")
-    print(f"   Fichier : {video_path}")
-    print(f"   Description : {description}")
-    return True
-
-# ─── PIPELINE PRINCIPAL ───────────────────────────────────────────────────────
+# ─── PIPELINE ─────────────────────────────────────────────────────────────────
 def run_agent():
-    print("\n🚀 AGENT TIKTOK DÉMARRÉ\n" + "="*40)
+    print("\n🚀 AGENT TIKTOK\n" + "="*40)
     with tempfile.TemporaryDirectory() as tmpdir:
+        # 1. Produits
         products = get_trending_products()
-        print(f"✅ {len(products)} produits trouvés")
 
+        # 2. Script
         data = select_product_and_write_script(products)
         product = data["product"]
-        hashtags = " ".join(data["hashtags"])
-        print(f"✅ Produit choisi : {product['name']}")
-        print(f"✅ Script : {data['script'][:80]}...")
+        print(f"✅ Produit : {product['name']}")
 
+        # 3. Audio
         audio_path = f"{tmpdir}/voix.mp3"
-        generate_voiceover(data["script"], audio_path)
+        if not generate_voiceover(data["script"], audio_path):
+            print("⛔ ARRÊT : audio invalide")
+            return
 
-        image_path = f"{tmpdir}/produit.jpg"
-        download_image(product.get("image_url", ""), image_path)
+        # 4. Image
+        image_path = f"{tmpdir}/bg.png"
+        if not create_background(product["name"], product["price"], image_path):
+            print("⛔ ARRÊT : image invalide")
+            return
 
+        # 5. Vidéo
         video_path = f"{tmpdir}/video.mp4"
-        create_video(image_path, audio_path, product["name"], product["price"], video_path)
+        if not create_video(image_path, audio_path, video_path):
+            print("⛔ ARRÊT : vidéo invalide")
+            return
 
+        # 6. Upload
+        video_url = upload_to_cloudinary(video_path)
+        if not video_url:
+            print("⛔ ARRÊT : upload échoué")
+            return
+
+        # 7. Résultat final
+        hashtags = " ".join(data["hashtags"])
         description = f"{data['angle']} 🔥 Lien en bio ! {hashtags}"
-        post_to_tiktok(video_path, description)
-
-        print(f"\n✅ CYCLE TERMINÉ")
-        print(f"   Produit : {product['name']}")
-        print(f"   Description : {description}")
-# Upload vidéo sur Cloudinary
-        try:
-            import cloudinary
-            import cloudinary.uploader
-            cloudinary.config(url=os.getenv("CLOUDINARY_URL"))
-            upload = cloudinary.uploader.upload_large(
-                video_path, 
-                resource_type="video", 
-                folder="tiktok-agent",
-                chunk_size=6000000
-            )
-            video_url = upload["secure_url"]
-            print(f"\n🌐 Vidéo en ligne : {video_url}")
-            print(f"📱 Description : {description}")
-        except Exception as e:
-            print(f"❌ Upload Cloudinary échoué : {e}")
+        print("\n" + "="*40)
+        print(f"✅ CYCLE COMPLET RÉUSSI")
+        print(f"📦 Produit : {product['name']} ({product['price']})")
+        print(f"🌐 Vidéo : {video_url}")
+        print(f"📱 Description : {description}")
+        print("="*40)
 
 if __name__ == "__main__":
     run_agent()
