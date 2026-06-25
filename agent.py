@@ -86,7 +86,6 @@ def create_background(product_name, product_price, image_path):
 # ─── 5. MONTAGE VIDÉO FFmpeg ──────────────────────────────────────────────────
 def create_video(image_path, audio_path, output_path):
     print("🎬 Montage vidéo...")
-    # Récupère la durée audio
     duration_cmd = [
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", audio_path
@@ -100,21 +99,18 @@ def create_video(image_path, audio_path, output_path):
 
     cmd = [
         "ffmpeg", "-y",
-        "-loop", "1", "-i", image_path,
+        "-loop", "1", "-framerate", "30", "-i", image_path,
         "-i", audio_path,
-        "-c:v", "libx264", "-tune", "stillimage",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
         "-pix_fmt", "yuv420p",
-        "-t", str(duration),
+        "-c:a", "aac",
+        "-b:a", "128k",
         "-shortest",
+        "-movflags", "+faststart",
         output_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
-        print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
-        return True
-    print(f"❌ FFmpeg erreur : {result.stderr[-300:]}")
-    return False
+    print(f"
 
 # ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
 def upload_to_cloudinary(video_path):
