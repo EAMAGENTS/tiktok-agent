@@ -114,72 +114,75 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
         print("❌ Pas de clips")
         return False
 
-    # Durée par clip
     clip_duration = duration / len(clips)
     
-    # Nettoyage texte pour drawtext
     safe_hook = re.sub(r"[':,]", "", hook)[:30]
     safe_name = re.sub(r"[':,]", "", product_name)[:28]
     safe_tagline = re.sub(r"[':,]", "", tagline)[:35]
     safe_price = product_price.replace("'", "")
 
-    # Étape 1 : Préparer chaque clip à la bonne durée et format 1080x1920
-    prepared_clips = []
+    # Étape 1 : préparer chaque clip (re-encode propre)
+    tmpdir = os.path.dirname(clips[0])
+    prepared = []
     for i, clip in enumerate(clips):
-        prepared = f"{os.path.dirname(clip)}/prepared_{i}.mp4"
+        out = f"{tmpdir}/prep_{i}.mp4"
         cmd = [
             "ffmpeg", "-y", "-i", clip,
             "-t", str(clip_duration),
-            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1",
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30",
             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            "-an",
-            prepared
+            "-an", "-r", "30",
+            out
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            prepared_clips.append(prepared)
+        if result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000:
+            prepared.append(out)
+            print(f"   ✅ Clip {i+1} préparé")
         else:
-            print(f"   ⚠️ Clip {i} préparation échouée")
+            print(f"   ⚠️ Clip {i+1} : {result.stderr[-200:]}")
 
-    if not prepared_clips:
+    if not prepared:
         print("❌ Aucun clip préparé")
         return False
 
-    # Étape 2 : Concaténer les clips
-    concat_file = f"{os.path.dirname(prepared_clips[0])}/concat.txt"
+    # Étape 2 : concat
+    concat_file = f"{tmpdir}/concat.txt"
     with open(concat_file, "w") as f:
-        for p in prepared_clips:
+        for p in prepared:
             f.write(f"file '{p}'\n")
 
-    concat_output = f"{os.path.dirname(prepared_clips[0])}/concat.mp4"
-    subprocess.run([
+    concat_out = f"{tmpdir}/concat.mp4"
+    result = subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
-        "-c", "copy", concat_output
-    ], capture_output=True)
+        "-c", "copy", concat_out
+    ], capture_output=True, text=True)
+    
+    if not os.path.exists(concat_out) or os.path.getsize(concat_out) < 1000:
+        print(f"❌ Concat : {result.stderr[-300:]}")
+        return False
+    print(f"   ✅ Concat OK")
 
-    # Étape 3 : Ajouter overlays texte + audio
-    # Hook : visible 0-3s en gros
-    # Nom produit : visible 3-15s en haut
-    # Tagline + prix : visibles 15s-fin en bas
+    # Étape 3 : overlays + audio en une passe
     vf = (
         f"drawbox=enable='between(t,0,3)':x=0:y=600:w=1080:h=400:color=black@0.75:t=fill,"
-        f"drawtext=enable='between(t,0,3)':text='{safe_hook}':fontsize=110:fontcolor=yellow:x=(w-text_w)/2:y=720,"
+        f"drawtext=enable='between(t,0,3)':text='{safe_hook}':fontsize=90:fontcolor=yellow:x=(w-text_w)/2:y=720,"
         f"drawbox=enable='gte(t,3)':x=0:y=150:w=1080:h=180:color=black@0.7:t=fill,"
-        f"drawtext=enable='gte(t,3)':text='{safe_name}':fontsize=70:fontcolor=white:x=(w-text_w)/2:y=210,"
-        f"drawbox=enable='gte(t,{duration*0.6})':x=0:y=1450:w=1080:h=350:color=black@0.8:t=fill,"
-        f"drawtext=enable='gte(t,{duration*0.6})':text='{safe_tagline}':fontsize=60:fontcolor=yellow:x=(w-text_w)/2:y=1500,"
-        f"drawtext=enable='gte(t,{duration*0.6})':text='{safe_price}':fontsize=150:fontcolor=#FF3366:x=(w-text_w)/2:y=1590"
+        f"drawtext=enable='gte(t,3)':text='{safe_name}':fontsize=60:fontcolor=white:x=(w-text_w)/2:y=210,"
+        f"drawbox=enable='gte(t,{duration*0.6:.1f})':x=0:y=1450:w=1080:h=350:color=black@0.8:t=fill,"
+        f"drawtext=enable='gte(t,{duration*0.6:.1f})':text='{safe_tagline}':fontsize=55:fontcolor=yellow:x=(w-text_w)/2:y=1500,"
+        f"drawtext=enable='gte(t,{duration*0.6:.1f})':text='{safe_price}':fontsize=130:fontcolor=#FF3366:x=(w-text_w)/2:y=1600"
     )
 
     cmd = [
         "ffmpeg", "-y",
-        "-i", concat_output,
+        "-i", concat_out,
         "-i", audio_path,
         "-vf", vf,
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",
+        "-map", "0:v", "-map", "1:a",
         "-t", str(duration),
-        "-shortest", "-movflags", "+faststart",
+        "-movflags", "+faststart",
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -187,7 +190,7 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
         print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
         return True
-    print(f"❌ FFmpeg : {result.stderr[-500:]}")
+    print(f"❌ FFmpeg overlay : {result.stderr[-500:]}")
     return False
 
 # ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
