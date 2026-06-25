@@ -2,7 +2,10 @@ import os, json, requests, subprocess, tempfile, re, random
 from dotenv import load_dotenv
 import anthropic
 from gtts import gTTS
+import unicodedata
 
+def strip_accents(text):
+    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
 load_dotenv()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -116,10 +119,10 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
 
     clip_duration = duration / len(clips)
     
-    safe_hook = re.sub(r"[':,]", "", hook)[:30]
-    safe_name = re.sub(r"[':,]", "", product_name)[:28]
-    safe_tagline = re.sub(r"[':,]", "", tagline)[:35]
-    safe_price = product_price.replace("'", "")
+   safe_hook = strip_accents(re.sub(r"[':,!?.]", "", hook))[:30]
+    safe_name = strip_accents(re.sub(r"[':,!?.]", "", product_name))[:28]
+    safe_tagline = strip_accents(re.sub(r"[':,!?.]", "", tagline))[:35]
+    safe_price = strip_accents(product_price.replace("'", ""))
 
     # Étape 1 : préparer chaque clip (re-encode propre)
     tmpdir = os.path.dirname(clips[0])
@@ -190,8 +193,8 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
         print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
         return True
-    print(f"❌ FFmpeg overlay : {result.stderr[-500:]}")
-    return False
+  print("❌ FFmpeg overlay erreur complète :")
+    print(result.stderr)
 
 # ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
 def upload_to_cloudinary(video_path):
