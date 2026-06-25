@@ -1,42 +1,39 @@
 import os, json, requests, subprocess, tempfile, re
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
 import anthropic
 from gtts import gTTS
 
 load_dotenv()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
-TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")
-TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
+UNSPLASH_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-# ─── 1. PRODUITS TRENDING ─────────────────────────────────────────────────────
 def get_trending_products():
-    print("🔍 Recherche produits trending...")
+    print("🔍 Produits trending...")
     return [
-        {"name": "Lampe LED USB rechargeable portable", "price": "8.99€", "url": "https://fr.aliexpress.com/w/wholesale-led-usb-lamp.html"},
-        {"name": "Montre connectée sport waterproof", "price": "15.99€", "url": "https://fr.aliexpress.com/w/wholesale-smart-watch.html"},
-        {"name": "Écouteurs sans fil Bluetooth 5.0", "price": "12.99€", "url": "https://fr.aliexpress.com/w/wholesale-bluetooth-earphones.html"},
-        {"name": "Mini aspirateur de bureau USB", "price": "6.99€", "url": "https://fr.aliexpress.com/w/wholesale-mini-vacuum.html"},
-        {"name": "Support téléphone voiture magnétique", "price": "4.99€", "url": "https://fr.aliexpress.com/w/wholesale-car-phone-holder.html"},
+        {"name": "Lampe LED USB rechargeable", "price": "8.99€", "url": "https://fr.aliexpress.com/w/wholesale-led-lamp.html", "search": "led lamp desk"},
+        {"name": "Montre connectée sport", "price": "15.99€", "url": "https://fr.aliexpress.com/w/wholesale-smart-watch.html", "search": "smartwatch fitness"},
+        {"name": "Écouteurs sans fil Bluetooth", "price": "12.99€", "url": "https://fr.aliexpress.com/w/wholesale-earphones.html", "search": "wireless earbuds"},
+        {"name": "Mini aspirateur de bureau USB", "price": "6.99€", "url": "https://fr.aliexpress.com/w/wholesale-vacuum.html", "search": "mini vacuum desk"},
+        {"name": "Support téléphone voiture magnétique", "price": "4.99€", "url": "https://fr.aliexpress.com/w/wholesale-phone-holder.html", "search": "phone holder car"},
     ]
 
-# ─── 2. SCRIPT IA ─────────────────────────────────────────────────────────────
 def select_product_and_write_script(products):
     print("🧠 Claude génère le script...")
-    prompt = f"""Tu es expert TikTok viral. Voici des produits :
+    prompt = f"""Tu es expert TikTok viral. Produits disponibles :
 {json.dumps(products, ensure_ascii=False)}
 
-Choisis le meilleur produit et écris un script vidéo TikTok de 30 secondes en français.
-IMPORTANT : Le script doit être du TEXTE PUR à lire à voix haute, SANS aucune indication scénique, SANS parenthèses, SANS marqueurs de temps.
+Choisis le meilleur et écris un script vidéo TikTok de 25 secondes en français.
+Le script doit être TEXTE PUR à lire à voix haute, SANS indications scéniques, SANS parenthèses, SANS marqueurs de temps.
+60 à 70 mots maximum.
 
-Réponds UNIQUEMENT en JSON :
+Réponds UNIQUEMENT en JSON valide :
 {{
-  "product": {{"name": "...", "price": "...", "url": "..."}},
-  "script": "texte pur à lire, sans aucune annotation, 60 à 80 mots",
-  "angle": "angle marketing en une phrase courte",
+  "product": {{"name": "...", "price": "...", "url": "...", "search": "..."}},
+  "script": "texte pur, 60-70 mots",
+  "tagline": "phrase choc de 5 mots maximum",
   "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }}"""
     response = client.messages.create(
@@ -47,87 +44,93 @@ Réponds UNIQUEMENT en JSON :
     text = re.sub(r'```json|```', '', response.content[0].text).strip()
     return json.loads(text)
 
-# ─── 3. VOIX OFF gTTS ─────────────────────────────────────────────────────────
+def download_product_image(search_term, output_path):
+    print(f"🖼️ Téléchargement image pour : {search_term}")
+    if not UNSPLASH_KEY:
+        return False
+    try:
+        r = requests.get(
+            "https://api.unsplash.com/photos/random",
+            params={"query": search_term, "orientation": "portrait"},
+            headers={"Authorization": f"Client-ID {UNSPLASH_KEY}"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            img_url = r.json()["urls"]["regular"]
+            img_data = requests.get(img_url, timeout=10).content
+            with open(output_path, "wb") as f:
+                f.write(img_data)
+            print(f"✅ Image téléchargée")
+            return True
+    except Exception as e:
+        print(f"⚠️ Unsplash : {e}")
+    return False
+
 def generate_voiceover(script_text, output_path):
-    print("🎙️ Génération voix off (gTTS)...")
+    print("🎙️ Voix off (gTTS)...")
     clean = re.sub(r'\([^)]*\)|\[[^\]]*\]', '', script_text)
     clean = re.sub(r'\d+\s*[-–:]\s*\d+\s*s', '', clean)
     clean = clean.replace('"', '').strip()
-    if len(clean) < 10:
-        print("❌ Script trop court")
-        return False
     tts = gTTS(text=clean, lang='fr', slow=False)
     tts.save(output_path)
-    # Validation
-    if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
-        print(f"✅ Audio OK ({os.path.getsize(output_path)} bytes)")
+    if os.path.getsize(output_path) > 1000:
+        print(f"✅ Audio OK")
         return True
-    print("❌ Audio invalide")
     return False
 
-# ─── 4. CRÉATION IMAGE FFmpeg ─────────────────────────────────────────────────
-def create_background(product_name, product_price, image_path):
-    print("🖼️ Création image fond...")
-    # Fond noir avec texte produit (couleur via lavfi)
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=0x1a1a2e:s=1080x1920:d=1",
-        "-frames:v", "1",
-        image_path
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0 and os.path.exists(image_path):
-        print(f"✅ Image OK")
-        return True
-    print(f"❌ Erreur image : {result.stderr[-200:]}")
-    return False
-
-# ─── 5. MONTAGE VIDÉO FFmpeg ──────────────────────────────────────────────────
-def create_video(image_path, audio_path, output_path):
-    print("🎬 Montage vidéo...")
-    duration_cmd = [
+def get_audio_duration(audio_path):
+    result = subprocess.run([
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", audio_path
-    ]
-    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True)
+    ], capture_output=True, text=True)
     try:
-        duration = float(duration_result.stdout.strip())
+        return float(result.stdout.strip())
     except:
-        duration = 30.0
-    print(f"   Durée audio : {duration:.1f}s")
+        return 25.0
+
+def create_video(image_path, audio_path, product_name, product_price, tagline, output_path):
+    print("🎬 Montage vidéo dynamique...")
+    duration = get_audio_duration(audio_path)
+    print(f"   Durée : {duration:.1f}s")
+
+    # Nettoyage texte pour FFmpeg drawtext
+    safe_name = product_name.replace("'", "").replace(":", "").replace(",", "")[:30]
+    safe_price = product_price.replace("'", "")
+    safe_tagline = tagline.replace("'", "").replace(":", "").replace(",", "")[:40]
+
+    # Filtre vidéo : zoom progressif + texte titre + texte prix + texte tagline
+    vf = (
+        f"scale=1080:1920:force_original_aspect_ratio=increase,"
+        f"crop=1080:1920,"
+        f"zoompan=z='min(zoom+0.0008,1.2)':d={int(duration*30)}:s=1080x1920:fps=30,"
+        f"drawbox=x=0:y=200:w=1080:h=200:color=black@0.7:t=fill,"
+        f"drawtext=text='{safe_name}':fontsize=72:fontcolor=white:x=(w-text_w)/2:y=260,"
+        f"drawbox=x=0:y=1500:w=1080:h=300:color=black@0.7:t=fill,"
+        f"drawtext=text='{safe_tagline}':fontsize=56:fontcolor=yellow:x=(w-text_w)/2:y=1560,"
+        f"drawtext=text='{safe_price}':fontsize=120:fontcolor=#FF3366:x=(w-text_w)/2:y=1650"
+    )
 
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-framerate", "30", "-i", image_path,
         "-i", audio_path,
+        "-vf", vf,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
+        "-c:a", "aac", "-b:a", "128k",
+        "-t", str(duration),
         "-shortest",
         "-movflags", "+faststart",
         output_path
     ]
-    print("   Commande : " + " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    print(f"   Return code : {result.returncode}")
-    if result.stderr:
-        print("   STDERR complet :")
-        print(result.stderr)
-    
-    if result.returncode == 0 and os.path.exists(output_path):
-        size = os.path.getsize(output_path)
-        if size > 10000:
-            print(f"✅ Vidéo OK ({size // 1024} KB)")
-            return True
-        else:
-            print(f"❌ Vidéo trop petite : {size} bytes")
+    if result.returncode == 0 and os.path.getsize(output_path) > 10000:
+        print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
+        return True
+    print(f"❌ FFmpeg : {result.stderr[-500:]}")
     return False
 
-# ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
 def upload_to_cloudinary(video_path):
     print("☁️ Upload Cloudinary...")
     try:
@@ -135,62 +138,49 @@ def upload_to_cloudinary(video_path):
         import cloudinary.uploader
         cloudinary.config(url=os.getenv("CLOUDINARY_URL"))
         upload = cloudinary.uploader.upload_large(
-            video_path,
-            resource_type="video",
-            folder="tiktok-agent",
-            chunk_size=6000000
+            video_path, resource_type="video",
+            folder="tiktok-agent", chunk_size=6000000
         )
-        url = upload["secure_url"]
-        print(f"✅ Vidéo en ligne : {url}")
-        return url
+        return upload["secure_url"]
     except Exception as e:
-        print(f"❌ Cloudinary échoué : {e}")
+        print(f"❌ Cloudinary : {e}")
         return None
 
-# ─── PIPELINE ─────────────────────────────────────────────────────────────────
 def run_agent():
-    print("\n🚀 AGENT TIKTOK\n" + "="*40)
+    print("\n🚀 AGENT TIKTOK PROMO\n" + "="*40)
     with tempfile.TemporaryDirectory() as tmpdir:
-        # 1. Produits
         products = get_trending_products()
-
-        # 2. Script
         data = select_product_and_write_script(products)
         product = data["product"]
         print(f"✅ Produit : {product['name']}")
+        print(f"✅ Tagline : {data['tagline']}")
 
-        # 3. Audio
         audio_path = f"{tmpdir}/voix.mp3"
         if not generate_voiceover(data["script"], audio_path):
-            print("⛔ ARRÊT : audio invalide")
             return
 
-        # 4. Image
-        image_path = f"{tmpdir}/bg.png"
-        if not create_background(product["name"], product["price"], image_path):
-            print("⛔ ARRÊT : image invalide")
-            return
+        image_path = f"{tmpdir}/img.jpg"
+        if not download_product_image(product["search"], image_path):
+            # Fallback fond coloré
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", "color=c=0x1a1a2e:s=1080x1920:d=1",
+                "-frames:v", "1", image_path
+            ], capture_output=True)
 
-        # 5. Vidéo
         video_path = f"{tmpdir}/video.mp4"
-        if not create_video(image_path, audio_path, video_path):
-            print("⛔ ARRÊT : vidéo invalide")
+        if not create_video(image_path, audio_path, product["name"], product["price"], data["tagline"], video_path):
             return
 
-        # 6. Upload
-        video_url = upload_to_cloudinary(video_path)
-        if not video_url:
-            print("⛔ ARRÊT : upload échoué")
-            return
-
-        # 7. Résultat final
+        url = upload_to_cloudinary(video_path)
         hashtags = " ".join(data["hashtags"])
-        description = f"{data['angle']} 🔥 Lien en bio ! {hashtags}"
+        description = f"{data['tagline']} 🔥 Lien en bio ! {hashtags}"
+        
         print("\n" + "="*40)
-        print(f"✅ CYCLE COMPLET RÉUSSI")
-        print(f"📦 Produit : {product['name']} ({product['price']})")
-        print(f"🌐 Vidéo : {video_url}")
-        print(f"📱 Description : {description}")
+        print(f"✅ VIDÉO PROMO CRÉÉE")
+        print(f"📦 {product['name']} — {product['price']}")
+        print(f"🌐 {url}")
+        print(f"📱 {description}")
         print("="*40)
 
 if __name__ == "__main__":
