@@ -122,7 +122,9 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
         # Remplacer toutes les apostrophes Unicode et caractères spéciaux
         text = re.sub(r"[\u2018\u2019\u201A\u201B\u2032\u2035'`]", "", text)
         text = re.sub(r"[\u201C\u201D\u201E\u201F\u2033\u2036\"]", "", text)
+        text = text.replace("€", "EUR").replace("£", "GBP").replace("$", "USD")
         text = re.sub(r"[:,!?.;@#%&*()\[\]{}<>|\\/=+]", "", text)
+        text = re.sub(r"[^\x00-\x7F]+", "", text)  # Supprime tout caractère non-ASCII restant
         return text.strip()
 
     safe_hook = clean_for_ffmpeg(hook)[:30]
