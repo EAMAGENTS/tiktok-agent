@@ -110,7 +110,22 @@ def create_video(image_path, audio_path, output_path):
         "-movflags", "+faststart",
         output_path
     ]
-    print(f"
+    print("   Commande : " + " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    print(f"   Return code : {result.returncode}")
+    if result.stderr:
+        print("   STDERR complet :")
+        print(result.stderr)
+    
+    if result.returncode == 0 and os.path.exists(output_path):
+        size = os.path.getsize(output_path)
+        if size > 10000:
+            print(f"✅ Vidéo OK ({size // 1024} KB)")
+            return True
+        else:
+            print(f"❌ Vidéo trop petite : {size} bytes")
+    return False
 
 # ─── 6. UPLOAD CLOUDINARY ─────────────────────────────────────────────────────
 def upload_to_cloudinary(video_path):
