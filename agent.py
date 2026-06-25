@@ -108,7 +108,6 @@ def download_pexels_videos(search_term, count, output_dir):
         print(f"⚠️ Pexels : {e}")
         return []
 
-
 def create_video(clips, audio_path, hook, product_name, product_price, tagline, output_path):
     print("🎬 Montage vidéo...")
     duration = get_audio_duration(audio_path)
@@ -117,12 +116,25 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if not clips:
         return False
 
-    clip_duration = duration / len(clips)
-    safe_hook = strip_accents(re.sub(r"[':,!?.]", "", hook))[:30]
-    safe_name = strip_accents(re.sub(r"[':,!?.]", "", product_name))[:28]
-    safe_tagline = strip_accents(re.sub(r"[':,!?.]", "", tagline))[:35]
-    safe_price = strip_accents(product_price.replace("'", ""))
+    # Nettoyage ULTRA agressif pour FFmpeg drawtext
+    def clean_for_ffmpeg(text):
+        text = strip_accents(text)
+        # Remplacer toutes les apostrophes Unicode et caractères spéciaux
+        text = re.sub(r"[\u2018\u2019\u201A\u201B\u2032\u2035'`]", "", text)
+        text = re.sub(r"[\u201C\u201D\u201E\u201F\u2033\u2036\"]", "", text)
+        text = re.sub(r"[:,!?.;@#%&*()\[\]{}<>|\\/=+]", "", text)
+        return text.strip()
 
+    safe_hook = clean_for_ffmpeg(hook)[:30]
+    safe_name = clean_for_ffmpeg(product_name)[:28]
+    safe_tagline = clean_for_ffmpeg(tagline)[:35]
+    safe_price = clean_for_ffmpeg(product_price)
+    
+    print(f"   Hook nettoyé : '{safe_hook}'")
+    print(f"   Nom nettoyé : '{safe_name}'")
+
+    # Préparer chaque clip à la bonne durée
+    clip_duration = duration / len(clips)
     tmpdir = os.path.dirname(clips[0])
     prepared = []
     for i, clip in enumerate(clips):
@@ -143,14 +155,19 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if not prepared:
         return False
 
+    # Concat avec loop si pas assez long
     concat_file = f"{tmpdir}/concat.txt"
     with open(concat_file, "w") as f:
-        for p in prepared:
-            f.write(f"file '{p}'\n")
+        # Boucle les clips pour couvrir toute la durée audio
+        loops_needed = max(1, int(duration / (clip_duration * len(prepared))) + 1)
+        for _ in range(loops_needed):
+            for p in prepared:
+                f.write(f"file '{p}'\n")
 
     concat_out = f"{tmpdir}/concat.mp4"
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
+        "-t", str(duration + 1),
         "-c", "copy", concat_out
     ], capture_output=True)
 
@@ -158,6 +175,7 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
         return False
     print("   ✅ Concat OK")
 
+    # Overlays + audio
     vf = (
         f"drawbox=enable='between(t,0,3)':x=0:y=600:w=1080:h=400:color=black@0.75:t=fill,"
         f"drawtext=enable='between(t,0,3)':text='{safe_hook}':fontsize=90:fontcolor=yellow:x=(w-text_w)/2:y=720,"
@@ -184,8 +202,8 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
     if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
         print(f"✅ Vidéo OK ({os.path.getsize(output_path) // 1024} KB)")
         return True
-    print("❌ FFmpeg erreur complète :")
-    print(result.stderr)
+    print("❌ FFmpeg erreur (dernières lignes) :")
+    print(result.stderr[-1500:])
     return False
 
 
