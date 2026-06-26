@@ -176,9 +176,10 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
 
     # 2. Prépare les clips vidéo (1080x1920, 30fps)
     clip_duration = duration / len(clips)
-    prepared = []
+   prepared = []
     for i, clip in enumerate(clips):
         out = f"{tmpdir}/prep_{i}.mp4"
+        print(f"   ⏳ Clip {i+1} : préparation...")
         cmd = [
             "ffmpeg", "-y", "-i", clip,
             "-t", str(clip_duration),
@@ -186,11 +187,16 @@ def create_video(clips, audio_path, hook, product_name, product_price, tagline, 
             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
             "-an", "-r", "30", out
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000:
-            prepared.append(out)
-            print(f"   ✅ Clip {i+1} prep")
-
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1000:
+                prepared.append(out)
+                print(f"   ✅ Clip {i+1} prep ({os.path.getsize(out)//1024} KB)")
+            else:
+                print(f"   ❌ Clip {i+1} échec")
+        except subprocess.TimeoutExpired:
+            print(f"   ⏱️ Clip {i+1} timeout (60s) — ignoré")
+            continue
     if not prepared:
         return False
 
