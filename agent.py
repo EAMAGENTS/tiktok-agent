@@ -38,7 +38,10 @@ def ali_request(method, extra_params):
     params["sign"] = ali_sign(params, ALI_APP_SECRET)
     try:
         r = requests.post(url, data=params, timeout=15)
-        return r.json()
+        data = r.json()
+        print(f"   🔎 RÉPONSE BRUTE ({method}) :")
+        print(f"   {json.dumps(data, ensure_ascii=False)[:1500]}")
+        return data
     except Exception as e:
         print(f"⚠️ AliExpress API : {e}")
         return {}
